@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Image Display</title>
+  </head>
+  <body>
+    <h1>Uploaded Image</h1>
+
+    <span>
+      <img
+        id="origImage"
+        src="{{ url_for('uploaded_file', filename=filename) }}"
+        alt="Original grayscaled Image"
+      />
+      <img
+        id="uploadedImage"
+        src="{{ url_for('uploaded_file', filename=filename) }}"
+        alt="Uploaded Image"
+      />
+    </span>
+
+    <h2>Image Adjustments</h2>
+
+    <label for="contrastCheckbox">Contrast:</label>
+    <input
+      type="range"
+      id="contrastSlider"
+      min="0"
+      max="200"
+      value="100"
+      oninput="adjustImage('contrastLayer')"
+    />
+    <input
+      type="checkbox"
+      id="contrastCheckbox"
+      onchange="toggleAdjustment('contrastLayer', this)"
+      checked
+    />
+    Apply Contrast
+    <br />
+
+    <label for="brightnessCheckbox">Brightness:</label>
+    <input
+      type="range"
+      id="brightnessSlider"
+      min="50"
+      max="150"
+      value="100"
+      oninput="adjustImage('brightnessLayer')"
+    />
+    <input
+      type="checkbox"
+      id="brightnessCheckbox"
+      onchange="toggleAdjustment('brightnessLayer', this)"
+      checked
+    />
+    Apply Brightness
+    <br />
+
+    <label for="thresholdCheckbox">Threshold:</label>
+    <input
+      type="range"
+      id="thresholdSlider"
+      min="0"
+      max="255"
+      value="128"
+      oninput="adjustImage('thresholdLayer')"
+    />
+    <input
+      type="checkbox"
+      id="thresholdCheckbox"
+      onchange="toggleAdjustment('thresholdLayer', this)"
+      checked
+    />
+    Apply Threshold
+    <br />
+
+    <button onclick="invertBlackAndWhite()">Invert Black & White</button>
+    <button onclick="saveAdjustedImage()">Save Adjusted Image</button>
+    <button onclick="saveAsOBJ()">Save as OBJ File</button>
+
+    <script>
+      var isImageInverted = false; // Track inversion state
+      var originalImageData; // Store the original image data
+
+      var adjustmentStates = {
+        contrastLayer: true,
+        brightnessLayer: true,
+        thresholdLayer: true,
+      };
+
+      function adjustImage(layer) {
+        var thresholdValue = document.getElementById("thresholdSlider").value;
+        var contrastValue = document.getElementById("contrastSlider").value;
+        var brightnessValue = document.getElementById("brightnessSlider").value;
+
+        var img = document.getElementById("uploadedImage");
+
+        // Create a canvas to work with image data
+        var canvas = document.createElement("canvas");
+        var ctx = canvas.getContext("2d");
+        var imgWidth = img.width;
+        var imgHeight = img.height;
+        canvas.width = imgWidth;
+        canvas.height = imgHeight;
+        ctx.drawImage(img, 0, 0, imgWidth, imgHeight);
+
+        // Get the original image data once
+        if (!originalImageData) {
+          originalImageData = ctx.getImageData(0, 0, imgWidth, imgHeight);
+        }
+
+        // Clone the original image data to work with
+        var imageData = new ImageData(
+          originalImageData.width,
+          originalImageData.height
+        );
+        imageData.data.set(originalImageData.data);
+
+        // Apply threshold adjustment
+        if (layer === "thresholdLayer" && adjustmentStates.thresholdLayer) {
+          for (var i = 0; i < imageData.data.length; i += 4) {
+            var avg =
+              (imageData.data[i] +
+                imageData.data[i + 1] +
+                imageData.data[i + 2]) /
+              3;
+            var newValue = avg >= thresholdValue ? 255 : 0;
+            imageData.data[i] = newValue;
+            imageData.data[i + 1] = newValue;
+            imageData.data[i + 2] = newValue;
+          }
+        }
+
+        // Apply other adjustments without affecting inversion
+        ctx.putImageData(imageData, 0, 0);
+        img.src = canvas.toDataURL();
+        img.style.filter =
+          "contrast(" +
+          (adjustmentStates.contrastLayer ? contrastValue : 100) +
+          "%) brightness(" +
+          (adjustmentStates.brightnessLayer ? brightnessValue : 100) +
+          "%)";
+
+        // Reapply inversion if it was previously inverted
+        if (isImageInverted) {
+          img.style.filter += " invert(100%)";
+        }
+      }
+
+      function toggleAdjustment(layer, checkbox) {
+        adjustmentStates[layer] = checkbox.checked;
+        adjustImage(layer);
+      }
+
+      function invertBlackAndWhite() {
+        var img = document.getElementById("uploadedImage");
+
+        // Toggle the inversion state
+        isImageInverted = !isImageInverted;
+
+        // Apply or remove the inversion based on the state
+        if (isImageInverted) {
+          img.style.filter += " invert(100%)";
+        } else {
+          img.style.filter = img.style.filter.replace("invert(100%)", "");
+        }
+      }
+
+      function saveAdjustedImage() {
+        var canvas = document.createElement("canvas");
+        var ctx = canvas.getContext("2d");
+        var img = document.getElementById("uploadedImage");
+
+        canvas.width = img.width;
+        canvas.height = img.height;
+
+        adjustImage("contrastLayer");
+        adjustImage("brightnessLayer");
+        adjustImage("thresholdLayer");
+
+        ctx.drawImage(img, 0, 0);
+
+        if (isImageInverted) {
+          ctx.filter = "invert(100%)";
+          ctx.drawImage(img, 0, 0, img.width, img.height);
+          ctx.filter = "none";
+        }
+
+        var dataURL = canvas.toDataURL();
+
+        var filename = prompt(
+          "Please enter a filename to save the image",
+          "image.png"
+        );
+        if (filename != null) {
+          var link = document.createElement("a");
+          link.href = dataURL;
+          link.download = filename;
+
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+        }
+      }
+
+      function saveAsOBJ() {
+        var canvas = document.createElement("canvas");
+        var ctx = canvas.getContext("2d");
+        var img = document.getElementById("uploadedImage");
+
+        canvas.width = img.width;
+        canvas.height = img.height;
+
+        // Apply adjustments to the image
+        adjustImage("contrastLayer");
+        adjustImage("brightnessLayer");
+        adjustImage("thresholdLayer");
+
+        if (isImageInverted) {
+          ctx.filter = "invert(100%)";
+          ctx.drawImage(img, 0, 0, img.width, img.height);
+          ctx.filter = "none";
+        }
+        // Draw the adjusted image onto the canvas
+        ctx.drawImage(img, 0, 0);
+
+        // Convert the canvas content to a data URL
+        var dataURL = canvas.toDataURL();
+
+        // Convert data URL to Blob
+        var blobBin = atob(dataURL.split(",")[1]);
+        var array = [];
+        for (var i = 0; i < blobBin.length; i++) {
+          array.push(blobBin.charCodeAt(i));
+        }
+        var file = new Blob([new Uint8Array(array)], { type: "image/png" });
+
+        // Create FormData and append the file
+        var formData = new FormData();
+        formData.append("image", file, "image.png");
+
+        // Send the image to server for conversion and saving as STL
+        fetch("/save-as-obj", {
+          method: "POST",
+          body: formData,
+        })
+          .then((response) => {
+            if (!response.ok) {
+              throw new Error("Failed to save as OBJ file");
+            }
+            return response.json();
+          })
+          .then((data) => {
+            console.log("OBJ file saved successfully:", data.filename);
+            alert("OBJ file saved successfully: " + data.filename);
+          })
+          .catch((error) => {
+            console.error("Error saving as OBJ file:", error.message);
+            alert("Error saving as OBJ file: " + error.message);
+          });
+      }
+    </script>
+  </body>
+</html>
