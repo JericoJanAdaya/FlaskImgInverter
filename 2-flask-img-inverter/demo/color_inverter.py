@@ -3,6 +3,7 @@ from flask import Flask, request, send_file, render_template, redirect, url_for
 import numpy as np
 from PIL import Image
 import os
+import open3d as o3d
 
 app = Flask(__name__)
 UPLOAD_FOLDER = 'uploads'
@@ -14,78 +15,104 @@ logger = logging.getLogger(__name__)
 
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
+def create_mesh(vertices, faces):
+    mesh = o3d.geometry.TriangleMesh()
+    mesh.vertices = o3d.utility.Vector3dVector(vertices)
+    mesh.triangles = o3d.utility.Vector3iVector(faces)
+    return mesh
+
 def image_to_obj(image_path, output_file):
     try:
-        # Load the image
-        img = Image.open(image_path).convert('L')  # Convert to grayscale
+        # Load the image and convert to grayscale
+        img = Image.open(image_path).convert('L')
+        data = 255 - np.array(img)
 
-        # Convert image to numpy array
-        data = np.array(img)
+        # Define vertices for the top surface
+        top_vertices = []
+        for i in range(data.shape[0]):
+            for j in range(data.shape[1]):
+                z = data[i][j] * 0.2  # Adjust the scale factor as needed
+                top_vertices.append([i, j, z])
+        top_vertices = np.array(top_vertices)
 
-        # Define vertices for the mesh
-        vertices = []
-
-        # Define extrusion height for black areas
-        extrusion_height = 20.0  # You can adjust this value
-
-        # Iterate through the image and create vertices
-        for i in range(len(data)):
-            for j in range(len(data[0])):
-                # Adjust Z scale according to pixel intensity
-                if data[i][j] >= 128:  # If the pixel is white
-                    z = 0.0  # White pixels have zero height
-                else:
-                    z = extrusion_height  # Positive extrusion height for black pixels
-
-                vertices.append([i, j, z])
-
-        # Define the vertices and faces for the mesh
-        vertices = np.array(vertices)
-        faces = []
-
-        # Create faces for the sides
-        num_cols = len(data[0])
-        num_rows = len(data)
-        for j in range(num_cols - 1):
-            for i in range(num_rows - 1):
-                v0 = i * num_cols + j
+        # Create faces for the top surface
+        top_faces = []
+        for i in range(data.shape[0] - 1):
+            for j in range(data.shape[1] - 1):
+                v0 = i * data.shape[1] + j
                 v1 = v0 + 1
-                v2 = v0 + num_cols
+                v2 = v0 + data.shape[1]
                 v3 = v2 + 1
 
-                faces.append([v0, v1, v3])
-                faces.append([v0, v3, v2])
+                top_faces.append([v0, v1, v2])
+                top_faces.append([v2, v1, v3])
 
-        # Create faces for the back side
-        back_offset = len(vertices)
-        for i in range(num_rows):
-            for j in range(num_cols):
-                vertices = np.append(vertices, [[i, j, 0.0]], axis=0)  # Add vertices at zero height for the back side
+        # Create and smooth the top surface mesh
+        top_mesh = create_mesh(top_vertices, top_faces)
+        top_mesh.compute_vertex_normals()
+        smoothed_top_mesh = top_mesh.filter_smooth_simple(number_of_iterations=2)
 
-        for i in range(num_rows - 1):
-            for j in range(num_cols - 1):
-                # Define vertices for the current quad on the back side
-                v0 = back_offset + i * num_cols + j
+        # Extract smoothed top surface vertices
+        smoothed_top_vertices = np.asarray(smoothed_top_mesh.vertices)
+
+        # Prepare bottom surface vertices with correct dimensions
+        bottom_vertices = np.hstack([top_vertices[:, :2], np.zeros((top_vertices.shape[0], 1))])
+
+        # Create full vertices array by concatenating smoothed top vertices with bottom vertices
+        vertices = np.vstack([smoothed_top_vertices, bottom_vertices])
+
+        # Initialize faces array with top surface faces
+        faces = top_faces.copy()  # Make a copy of the top_faces to start with top surface faces
+
+        # Calculate offset for bottom vertices (after the smoothed top vertices)
+        offset = smoothed_top_vertices.shape[0]
+
+        # Bottom surface faces
+        for i in range(data.shape[0] - 1):
+            for j in range(data.shape[1] - 1):
+                v0 = offset + i * data.shape[1] + j
                 v1 = v0 + 1
-                v2 = v0 + num_cols
+                v2 = v0 + data.shape[1]
                 v3 = v2 + 1
 
                 faces.append([v0, v2, v1])
-                faces.append([v1, v2, v3])
+                faces.append([v2, v3, v1])
 
-        # Write the vertices and faces to the OBJ file
-        with open(output_file, 'w') as f:
-            for vertex in vertices:
-                f.write('v {} {} {}\n'.format(vertex[0], vertex[1], vertex[2]))
+        # Create faces for the sides
+        for i in range(data.shape[0]):
+            for j in range(data.shape[1]):
+                if i < data.shape[0] - 1:
+                    # Side faces in i direction
+                    v0 = i * data.shape[1] + j
+                    v1 = v0 + data.shape[1]
+                    v2 = v1 + offset
+                    v3 = v0 + offset
 
-            for face in faces:
-                f.write('f {} {} {}\n'.format(face[0] + 1, face[1] + 1, face[2] + 1))
+                    faces.append([v0, v1, v2])
+                    faces.append([v0, v2, v3])
+
+                if j < data.shape[1] - 1:
+                    # Side faces in j direction
+                    v0 = i * data.shape[1] + j
+                    v1 = v0 + 1
+                    v2 = v1 + offset
+                    v3 = v0 + offset
+
+                    faces.append([v0, v1, v2])
+                    faces.append([v0, v2, v3])
+
+        # Create the final mesh
+        mesh = create_mesh(vertices, faces)
+        mesh.compute_vertex_normals()   
+
+        # Save the smoothed mesh
+        o3d.io.write_triangle_mesh(output_file, mesh)
 
         return {'message': 'OBJ file saved successfully', 'filename': os.path.basename(output_file)}
 
     except Exception as e:
+        print(f'Error while converting image to OBJ: {str(e)}')
         return {'message': f'Error while converting image to OBJ: {str(e)}'}
-
 
 @app.route('/')
 def home():
@@ -139,23 +166,26 @@ def save_adjusted_image():
 @app.route('/save-as-obj', methods=['POST'])
 def save_as_obj():
     if 'image' not in request.files:
+        logger.warning('No image file provided')
         return {'message': 'No image file provided'}, 400
 
     image = request.files['image']
     save_path = os.path.join(app.config['UPLOAD_FOLDER'], image.filename)
 
     # Save the image
-    image.save(save_path)
+    image_path = os.path.join(app.config['UPLOAD_FOLDER'], image.filename)
+    image.save(image_path)
+    logger.info(f'Image saved at {image_path}')
 
     # Create the OBJ file path
     obj_file_path = os.path.join(app.config['UPLOAD_FOLDER'], os.path.splitext(image.filename)[0] + '.obj')
 
     # Convert the image to OBJ and save
-    try:
-        image_to_obj(save_path, obj_file_path)
+    result = image_to_obj(image_path, obj_file_path)
+    if result['message'] == 'OBJ file saved successfully':
         return {'message': 'OBJ file saved successfully', 'filename': os.path.basename(obj_file_path)}
-    except Exception as e:
-        return {'message': f'Error saving OBJ file: {str(e)}'}, 500
+    else:
+        return {'message': result['message'], 'filename': ''}, 500
 
 
 if __name__ == '__main__':
