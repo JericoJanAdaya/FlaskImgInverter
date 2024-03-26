@@ -7,6 +7,7 @@ from potrace import Bitmap, POTRACE_TURNPOLICY_MINORITY
 import open3d as o3d
 import subprocess
 from werkzeug.utils import secure_filename
+from flask import send_from_directory
 
 app = Flask(__name__)
 UPLOAD_FOLDER = 'uploads'
@@ -123,24 +124,6 @@ def image_to_obj(image_path, output_file):
 def home():
     return render_template('front-display/home-display.html')
 
-
-# @app.route('/upload-file', methods=['POST'])
-# def upload_file():
-#     if 'file' not in request.files:
-#         return redirect(request.url)
-#     file = request.files['file']
-#     if file.filename == '':
-#         return redirect(request.url)
-#     if file:
-#         filepath = os.path.join(app.config['UPLOAD_FOLDER'], file.filename)
-
-#         # Convert and save the grayscale image
-#         image = Image.open(file).convert('L')
-#         grayscale_filepath = os.path.join(app.config['UPLOAD_FOLDER'], 'grayscale_' + file.filename)
-#         image.save(grayscale_filepath)
-
-#         return redirect(url_for('display_image', filename='grayscale_' + file.filename))
-
 @app.route('/upload-file', methods=['POST'])
 def upload_file():
     if 'file' not in request.files:
@@ -150,14 +133,22 @@ def upload_file():
     if file.filename == '':
         logger.info('No selected file')
         return redirect(request.url)
-    if file and file.filename.endswith('.svg'):
+    if file:
         filename = secure_filename(file.filename)
         filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
         file.save(filepath)
-        logger.info(f'File {filename} uploaded successfully')
-        return redirect(url_for('save_as_obj', filename=filename))
-    return jsonify({'message': 'Invalid file type. Only SVG files are allowed.'}), 400
+        if filename.lower().endswith('.svg'):
+            logger.info(f'SVG File {filename} uploaded successfully')
+            return redirect(url_for('display_svg', filename=filename))
+        else:
+            logger.info(f'Image File {filename} uploaded successfully')
+            return redirect(url_for('display_image', filename=filename))
+    return jsonify({'message': 'Unsupported file type'}), 400
 
+@app.route('/display-svg/<filename>')
+def display_svg(filename):
+    # Just send the SVG file to be displayed directly without any adjustments
+    return render_template('front-display/render-svg.html', filename=filename)
 
 @app.route('/uploads/<filename>')
 def uploaded_file(filename):
@@ -184,71 +175,64 @@ def save_adjusted_image():
 
     return {'message': 'Adjusted image saved successfully', 'filename': image.filename}
 
-
-# @app.route('/save-as-obj', methods=['POST'])
-# def save_as_obj():
-#     if 'image' not in request.files:
-#         logger.warning('No image file provided')
-#         return {'message': 'No image file provided'}, 400
-
-#     image = request.files['image']
-#     save_path = os.path.join(app.config['UPLOAD_FOLDER'], image.filename)
-
-#     # Save the image
-#     image_path = os.path.join(app.config['UPLOAD_FOLDER'], image.filename)
-#     image.save(image_path)
-#     logger.info(f'Image saved at {image_path}')
-
-#     # Create the OBJ file path
-#     obj_file_path = os.path.join(app.config['UPLOAD_FOLDER'], os.path.splitext(image.filename)[0] + '.obj')
-
-#     # Convert the image to OBJ and save
-#     result = image_to_obj(image_path, obj_file_path)
-#     if result['message'] == 'OBJ file saved successfully':
-#         return {'message': 'OBJ file saved successfully', 'filename': os.path.basename(obj_file_path)}
-#     else:
-#         return {'message': result['message'], 'filename': ''}, 500
-
 @app.route('/save-as-obj', methods=['GET', 'POST'])
 def save_as_obj():
     if request.method == 'POST':
+        # This branch handles the image uploads for conversion to OBJ
         if 'image' not in request.files:
+            logger.warning('No image file provided')
             return jsonify({'message': 'No image file provided'}), 400
 
         image = request.files['image']
         filename = secure_filename(image.filename)
         if filename == '':
+            logger.warning('Invalid file name')
             return jsonify({'message': 'Invalid file name'}), 400
 
-        # Define paths for POST request
         image_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-        # Save the SVG file for POST request
+        # Save the image for POST request
         image.save(image_path)
+        logger.info(f'Image saved at {image_path}')
+
+        # Create the OBJ file path
+        obj_file_path = os.path.join(app.config['UPLOAD_FOLDER'], os.path.splitext(image.filename)[0] + '.obj')
+
+        # Convert the image to OBJ and save
+        result = image_to_obj(image_path, obj_file_path)
+        if result['message'] == 'OBJ file saved successfully':
+            logger.info(f'OBJ file saved successfully for {filename}')
+            return jsonify({'message': 'OBJ file saved successfully', 'filename': os.path.basename(obj_file_path)})
+        else:
+            logger.error(f'Error saving OBJ: {result["message"]}')
+            return jsonify({'message': result['message'], 'filename': ''}), 500
 
     elif request.method == 'GET':
+        # This branch is for SVG conversion to OBJ using Blender
         filename = request.args.get('filename')
         if not filename:
+            logger.warning('No filename provided for SVG conversion')
             return jsonify({'message': 'No filename provided'}), 400
 
-        # Define paths for GET request
-        image_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-        if not os.path.exists(image_path):
+        svg_file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        if not os.path.exists(svg_file_path):
+            logger.error('File does not exist for SVG conversion')
             return jsonify({'message': 'File does not exist'}), 404
 
-    svg_file_path = image_path  # The uploaded file is assumed to be an SVG
-    obj_file_path = os.path.splitext(image_path)[0] + '.obj'
+        obj_file_path = os.path.splitext(svg_file_path)[0] + '.obj'
 
-    # Prepare Blender command
-    blender_path = r"C:/Program Files/Blender Foundation/Blender 3.1/blender.exe"
-    script_path = r"C:/Users/user/Documents/4th year/OJT/OJT Files/FlaskImgInverter/2-flask-img-inverter/demo/svg_to_obj.py"  # Adjust to your Blender script's location
-    cmd = [blender_path, '-b', '-P', script_path, '--', svg_file_path, obj_file_path]
+        # Prepare Blender command for SVG to OBJ conversion
+        blender_path = r"C:/Program Files/Blender Foundation/Blender 3.1/blender.exe"
+        script_path = r"C:/Users/user/Documents/4th year/OJT/OJT Files/FlaskImgInverter/2-flask-img-inverter/demo/svg_to_obj.py"
+        cmd = [blender_path, '-b', '-P', script_path, '--', svg_file_path, obj_file_path]
 
-    # Run Blender script
-    try:
-        subprocess.run(cmd, check=True)
-        return jsonify({'message': 'OBJ file saved successfully', 'filename': os.path.basename(obj_file_path)})
-    except subprocess.CalledProcessError as e:
-        return jsonify({'message': f'Blender script failed: {e}'}), 500
+        # Run Blender script for SVG
+        try:
+            subprocess.run(cmd, check=True)
+            logger.info(f'OBJ file saved successfully for {filename}')
+            return jsonify({'message': 'OBJ file saved successfully', 'filename': os.path.basename(obj_file_path)})
+        except subprocess.CalledProcessError as e:
+            logger.error(f'Blender script failed: {e}')
+            return jsonify({'message': f'Blender script failed: {e}'}), 500
 
 if __name__ == '__main__':
     app.run(debug=True)

@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>SVG Display</title>
+</head>
+<body>
+    <h1>Uploaded SVG</h1>
+    <div>
+        <object id="svgObject" data="{{ url_for('uploaded_file', filename=filename) }}" type="image/svg+xml"></object>
+    </div>
+
+    <button onclick="saveAsOBJ()">Save as OBJ File</button>
+
+    <script>
+        function saveAsOBJ() {
+            // This function will trigger the SVG to OBJ conversion
+            fetch(`/save-as-obj?filename=${encodeURIComponent('{{ filename }}')}`, {
+                method: "GET",
+            })
+            .then((response) => {
+                if (!response.ok) {
+                    throw new Error("Failed to save as OBJ file");
+                }
+                return response.json();
+            })
+            .then((data) => {
+                console.log("OBJ file saved successfully:", data.filename);
+                alert("OBJ file saved successfully: " + data.filename);
+            })
+            .catch((error) => {
+                console.error("Error saving as OBJ file:", error.message);
+                alert("Error saving as OBJ file: " + error.message);
+            });
+        }
+    </script>
+</body>
+</html>
