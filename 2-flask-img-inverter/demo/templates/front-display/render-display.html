@@ -78,6 +78,7 @@
     <button onclick="invertBlackAndWhite()">Invert Black & White</button>
     <button onclick="saveAdjustedImage()">Save Adjusted Image</button>
     <button onclick="saveAsOBJ()">Save as OBJ File</button>
+    <button onclick="saveAsSVG()">Save as SVG File</button>
 
     <script>
       var isImageInverted = false; // Track inversion state
@@ -266,7 +267,54 @@
             console.error("Error saving as OBJ file:", error.message);
             alert("Error saving as OBJ file: " + error.message);
         });
-    }
+      }
+
+      function saveAsSVG() {
+        var canvas = document.createElement("canvas");
+        var ctx = canvas.getContext("2d");
+        var img = document.getElementById("uploadedImage");
+
+        canvas.width = img.width;
+        canvas.height = img.height;
+
+        // Adjustments applied here as needed
+        ctx.drawImage(img, 0, 0);
+
+        // Convert the canvas content to a data URL
+        var dataURL = canvas.toDataURL();
+
+        // Convert data URL to Blob for SVG conversion
+        var blobBin = atob(dataURL.split(",")[1]);
+        var array = [];
+        for (var i = 0; i < blobBin.length; i++) {
+            array.push(blobBin.charCodeAt(i));
+        }
+        var file = new Blob([new Uint8Array(array)], {type: "image/png"});
+
+        // Create FormData and append the file
+        var formData = new FormData();
+        formData.append("image", file, "image.png");
+
+        // Send the image to the server for conversion and saving as SVG
+        fetch("/save-as-svg", {
+            method: "POST",
+            body: formData,
+        })
+        .then((response) => {
+            if (!response.ok) {
+                throw new Error("Failed to save as SVG file");
+            }
+            return response.json();
+        })
+        .then((data) => {
+            console.log("SVG file saved successfully:", data.filename);
+            alert("SVG file saved successfully: " + data.filename);
+        })
+        .catch((error) => {
+            console.error("Error saving as SVG file:", error.message);
+            alert("Error saving as SVG file: " + error.message);
+        });
+      }
     </script>
   </body>
 </html>

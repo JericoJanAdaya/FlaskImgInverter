@@ -3,10 +3,10 @@ from flask import Flask, request, send_file, render_template, redirect, url_for,
 import numpy as np
 from PIL import Image
 import os
-from potrace import Bitmap, POTRACE_TURNPOLICY_MINORITY
 import open3d as o3d
 import subprocess
 from werkzeug.utils import secure_filename
+from potrace.potrace import Bitmap, POTRACE_TURNPOLICY_MINORITY
 from flask import send_from_directory
 
 app = Flask(__name__)
@@ -18,6 +18,42 @@ logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
+def file_to_svg(input_file_path):
+    try:
+        image = Image.open(input_file_path)
+    except IOError:
+        logger.error(f"Image ({input_file_path}) could not be loaded.")
+        return None
+    bm = Bitmap(image, blacklevel=0.5)
+    plist = bm.trace(
+        turdsize=2,
+        turnpolicy=POTRACE_TURNPOLICY_MINORITY,
+        alphamax=1,
+        opticurve=False,
+        opttolerance=0.2,
+    )
+    svg_output = f"{input_file_path}.svg"
+    with open(svg_output, "w") as fp:
+        fp.write(f'<svg version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="{image.width}" height="{image.height}" viewBox="0 0 {image.width} {image.height}">')
+        parts = []
+        for curve in plist:
+            fs = curve.start_point
+            parts.append(f"M{fs.x},{fs.y}")
+            for segment in curve.segments:
+                if segment.is_corner:
+                    a = segment.c
+                    b = segment.end_point
+                    parts.append(f"L{a.x},{a.y}L{b.x},{b.y}")
+                else:
+                    a = segment.c1
+                    b = segment.c2
+                    c = segment.end_point
+                    parts.append(f"C{a.x},{a.y} {b.x},{b.y} {c.x},{c.y}")
+            parts.append("z")
+        fp.write(f'<path stroke="none" fill="black" fill-rule="evenodd" d="{"".join(parts)}"/>')
+        fp.write("</svg>")
+    return svg_output
 
 def create_mesh(vertices, faces):
     mesh = o3d.geometry.TriangleMesh()
@@ -233,6 +269,34 @@ def save_as_obj():
         except subprocess.CalledProcessError as e:
             logger.error(f'Blender script failed: {e}')
             return jsonify({'message': f'Blender script failed: {e}'}), 500
+        
+@app.route('/save-as-svg', methods=['POST'])
+def save_as_svg():
+    if 'image' not in request.files:
+        return jsonify({'message': 'No image file provided'}), 400
+    
+    # Receive the image file from the request
+    image = request.files['image']
+    filename = secure_filename(image.filename)
+    if filename == '':
+        return jsonify({'message': 'Invalid file name'}), 400
+    
+    # Save the original image temporarily
+    temp_image_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+    image.save(temp_image_path)
+    
+    # Convert the saved image to SVG
+    svg_filename = file_to_svg(temp_image_path)
+    
+    # Clean up the original image file to save space, if desired
+    os.remove(temp_image_path)
+    
+    if svg_filename:
+        svg_url = url_for('uploaded_file', filename=os.path.basename(svg_filename))
+        
+        return jsonify({'message': 'SVG file created successfully', 'filename': os.path.basename(svg_filename), 'url': svg_url})
+    else:
+        return jsonify({'message': 'Failed to convert image to SVG'}), 500
 
 if __name__ == '__main__':
     app.run(debug=True)
