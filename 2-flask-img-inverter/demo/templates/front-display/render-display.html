@@ -280,6 +280,23 @@
         // Adjustments applied here as needed
         ctx.drawImage(img, 0, 0);
 
+        // Manually apply adjustments including inversion if necessary
+        adjustImage("contrastLayer");
+        adjustImage("brightnessLayer");
+        adjustImage("thresholdLayer");
+
+        // Manually apply inversion to image data if it has been toggled
+        if (isImageInverted) {
+            var imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            for (var i = 0; i < imageData.data.length; i += 4) {
+                // Invert color for each channel
+                imageData.data[i] = 255 - imageData.data[i];       // Red
+                imageData.data[i + 1] = 255 - imageData.data[i + 1]; // Green
+                imageData.data[i + 2] = 255 - imageData.data[i + 2]; // Blue
+            }
+            ctx.putImageData(imageData, 0, 0);
+        }
+
         // Convert the canvas content to a data URL
         var dataURL = canvas.toDataURL();
 
